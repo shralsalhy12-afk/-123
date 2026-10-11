@@ -100,12 +100,11 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
         selected_remains_id = st.selectbox("اختر معرف الرفات المجهول المراد فحصه ومطابقته:", [r[0] for r in remains_list])
         
         if st.button("🚀 بدء عملية المطابقة والبحث الشامل"):
-            # استخراج بيانات الرفات المختار
             selected_remains = next(r for r in remains_list if r[0] == selected_remains_id)
             remains_data = {
                 "stature": selected_remains[4],
                 "notes": selected_remains[5],
-                "has_dna": True # افتراضي للتحليل
+                "has_dna": True
             }
             
             st.markdown(f"### نتائج المطابقة للرفات رقم ({selected_remains_id}):")
@@ -119,12 +118,10 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
                     "reasons": match_res["match_reasons"]
                 })
             
-            # ترتيب النتائج تنازلياً حسب نسبة التطابق
             results = sorted(results, key=lambda x: x["score"], reverse=True)
             
             for res in results:
-                # عرض النسبة بلون أو متر تفاعلي
-                st.write(🇪🇬 f"**المرشح:** {res['name']}")
+                st.write(f"**المرشح:** {res['name']}")
                 st.progress(res['score'] / 100)
                 st.write(f"**نسبة التطابق المقترحة:** {res['score']}%")
                 if res['reasons']:
