@@ -15,24 +15,15 @@ def get_supabase_client() -> Client:
 
 def init_db():
     """
-    تهيئة قاعدة البيانات في Supabase وإنشاء الجداول إن لم تكن موجودة
+    دالة التحقق من اتصال قاعدة البيانات
     """
-    supabase = get_supabase_client()
-    
     try:
-        # اختبار الاتصال أولاً وجلب عينة
+        supabase = get_supabase_client()
+        # اختبار اتصال سريع بجدول المفقودين
         supabase.table("missing_persons").select("missing_id").limit(1).execute()
-        print("جدول بلاغات المفقودين موجود مسبقاً في Supabase.")
-    except Exception:
-        print("جاري إنشاء جدول missing_persons في Supabase...")
-        # ملاحظة: في Supabase، الأفضل إنشاء الجداول عبر SQL Editor في لوحة التحكم، 
-        # أو تنفيذ الاستعلامات. لكن دعيني أسهل عليكِ الأمر أكثر:
-        
-    try:
-        supabase.table("unidentified_remains").select("remains_id").limit(1).execute()
-        print("جدول الرفات المجهولة موجود مسبقاً في Supabase.")
-    except Exception:
-        print("جدول unidentified_remains يحتاج للإنشاء.")
+        print("تم الاتصال بقاعدة بيانات Supabase بنجاح تام!")
+    except Exception as e:
+        print(f"تنبيه الاتصال: {e}")
 
 if __name__ == '__main__':
     init_db()
