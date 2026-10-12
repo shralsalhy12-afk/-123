@@ -1,5 +1,6 @@
 import streamlit as st
 import sqlite3
+import os
 from database import init_db
 from add_case import add_unidentified_remains
 from add_missing_person import add_missing_person
@@ -39,9 +40,12 @@ if choice == "إضافة بلاغ مفقود (عائلة)":
             add_missing_person(full_name, age_range, gender, medical_history, has_dna)
             st.success(f"تم تسجيل بلاغ المفقود ({full_name}) بنجاح!")
 
-# 2. قسم تسجيل رفات مجهول
+# 2. قسم تسجيل رفات مجهول (مع ميزة رفع صور متعددة)
 elif choice == "تسجيل رفات مجهول (ميداني)":
-    st.header("🦴 تسجيل حالة هيكل عظمي / رفات مجهول")
+    st.header("🦴 تسجيل حالة هيكل عظمي / رفات مجهول مع رفع الصور")
+    
+    # نظراً لأن زر الرفع (file_uploader) لا يعمل بشكل مثالي داخل form تقليدي في Streamlit،
+    # سنقوم ببناء النموذج باستخدام تفاعلات مباشرة آمنة وسلسة.
     
     with st.form("remains_form"):
         location = st.text_input("مكان الاستخراج / العثور")
@@ -52,14 +56,55 @@ elif choice == "تسجيل رفات مجهول (ميداني)":
             estimated_sex = st.text_input("الجنس التقديري")
             
         stature = st.number_input("الطول التقديري (بالسنتيمتر)", min_value=0.0, value=170.0)
-        bone_image_path = st.text_input("مسار صورة العظم أو الأشعة", value="samples/bone.jpg")
         analysis_notes = st.text_area("ملاحظات الطب الشرعي والماركرز الفارقة (صفائح، علامات مرضية)")
         
-        submit_remains = st.form_submit_button("حفظ حالة الرفات")
+        submit_info = st.form_submit_button("حفظ بيانات الحالة أولاً")
+
+    # زر رفع الصور المتعددة (مستقل وخارج الـ form ليعمل بمرونة تامة)
+    st.markdown("---")
+    st.subheader("📷 مرفقات الصور والأشعة (رفع متعدد)")
+    uploaded_files = st.file_uploader(
+        "اختر صور العظام أو الأشعة (يمكنك تحديد واختيار أكثر من صورة دفعة واحدة)", 
+        type=["jpg", "jpeg", "png", "dcm"], 
+        accept_multiple_files=True
+    )
+
+    if uploaded_files:
+        # إنشاء مجلد للتخزين المحلي المؤقت على السيرفر
+        os.makedirs("samples", exist_ok=True)
+        saved_paths = []
         
-        if submit_remains and location:
-            add_unidentified_remains(location, estimated_age, estimated_sex, stature, bone_image_path, analysis_notes)
-            st.success("تم تسجيل حالة الرفات المجهول بنجاح في قاعدة البيانات!")
+        for uploaded_file in uploaded_files:
+            file_path = os.path.join("samples", uploaded_file.name)
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            saved_paths.append(file_path)
+            
+        st.success(f"تم رفع وتخزين عدد ({len(uploaded_files)}) صورة بنجاح!")
+        
+        # عرض معاينة مصغرة للصور المرفوعة أمام الطبيب
+        st.write("معاينة الصور المرفوعة:")
+        cols = st.columns(min(len(uploaded_files), 4))
+        for idx, file in enumerate(uploaded_files):
+            with cols[idx % 4]:
+                st.image(file, caption=file.name, use_container_width=True)
+                
+        # زر لتأكيد ربط مسارات الصور بالحالة الأخيرة في قاعدة البيانات
+        if st.button("💾 ربط الصور المرفوعة بالحالة في النظام"):
+            conn = sqlite3.connect('forensic_system.db')
+            cursor = conn.cursor()
+            # دمج مسارات الصور بفاصلة نصية لتخزينها معاً
+            all_paths_str = ",".join(saved_paths)
+            
+            # تحديث أحدث حالة رفات أُدخلت بمسارات الصور الفعلية
+            cursor.execute("""
+                UPDATE unidentified_remains 
+                SET bone_image_path = ? 
+                WHERE remains_id = (SELECT MAX(remains_id) FROM unidentified_remains)
+            """, (all_paths_str,))
+            conn.commit()
+            conn.close()
+            st.success("تم تحديث مسارات الصور في قاعدة بيانات الرفات بنجاح تام!")
 
 # 3. قسم السجلات ومحرك المطابقة التفاعلي
 elif choice == "سجلات النظام ومحرك المطابقة الذكي":
@@ -68,11 +113,9 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
     conn = sqlite3.connect('forensic_system.db')
     cursor = conn.cursor()
     
-    # جلب الرفات المسجلة
-    cursor.execute("SELECT remains_id, recovery_location, estimated_age, estimated_sex, stature, analysis_notes FROM unidentified_remains")
+    cursor.execute("SELECT remains_id, recovery_location, estimated_age, estimated_sex, stature, bone_image_path, analysis_notes FROM unidentified_remains")
     remains_list = cursor.fetchall()
     
-    # جلب بلاغات المفقودين المسجلة
     cursor.execute("SELECT missing_id, full_name, age_range, gender, medical_history, has_dna_sample FROM missing_persons")
     missing_list = cursor.fetchall()
     
@@ -81,7 +124,7 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
         st.subheader("📁 الرفات المجهولة المسجلة:")
         if remains_list:
             for r in remains_list:
-                st.info(f"**معرف الرفات:** {r[0]} | **المكان:** {r[1]} | **الطول:** {r[4]} سم\n\n**ملاحظات:** {r[5]}")
+                st.info(f"**معرف الرفات:** {r[0]} | **المكان:** {r[1]} | **الطول:** {r[4]} سم\n\n**الصور المرفقة:** {r[5]}\n\n**ملاحظات:** {r[6]}")
         else:
             st.warning("لا توجد رفات مسجلة.")
             
@@ -103,7 +146,7 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
             selected_remains = next(r for r in remains_list if r[0] == selected_remains_id)
             remains_data = {
                 "stature": selected_remains[4],
-                "notes": selected_remains[5],
+                "notes": selected_remains[6],
                 "has_dna": True
             }
             
