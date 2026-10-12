@@ -1,23 +1,30 @@
-import sqlite3
+from database import get_supabase_client
 
 def add_unidentified_remains(location, age, sex, stature, image_path, notes):
-    # الاتصال بقاعدة البيانات التي أنشأناها مسبقاً
-    conn = sqlite3.connect('forensic_system.db')
-    cursor = conn.cursor()
+    """
+    إدخال حالة هيكل عظمي / رفات مجهول جديدة مباشرة إلى جدول unidentified_remains في Supabase
+    """
+    # الحصول على الاتصال المشفر مع Supabase
+    supabase = get_supabase_client()
 
-    # إدخال بيانات الهيكل العظمي الجديد إلى الجدول
-    cursor.execute('''
-        INSERT INTO unidentified_remains 
-        (recovery_location, estimated_age, estimated_sex, stature, bone_image_path, analysis_notes)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (location, age, sex, stature, image_path, notes))
+    # تجهيز البيانات كقاموس (Dictionary) متوافق مع بنية أعمدة جدول PostgreSQL
+    data = {
+        "recovery_location": location,
+        "estimated_age": str(age),
+        "estimated_sex": str(sex),
+        "stature": float(stature) if stature else 0.0,
+        "bone_image_path": str(image_path),
+        "analysis_notes": str(notes)
+    }
 
-    conn.commit()
-    conn.close()
-    print("تم تسجيل حالة الهيكل العظمي المجهول بنجاح في النظام العالمي!")
+    # تنفيذ أمر الإدخال (Insert)
+    response = supabase.table("unidentified_remains").insert(data).execute()
+    
+    print("تم تسجيل حالة الهيكل العظمي المجهول بنجاح تام في قاعدة بيانات Supabase السحابية!")
+    return response
 
 if __name__ == '__main__':
-    # تجربة إدخال حالة افتراضية لفحص النظام
+    # تجربة إدخال حالة افتراضية لفحص الاتصال والتخزين
     add_unidentified_remains(
         location="قطاع غزة - المنطقة الجنوبية",
         age="25-35",
