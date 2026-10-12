@@ -40,14 +40,12 @@ if choice == "إضافة بلاغ مفقود (عائلة)":
             add_missing_person(full_name, age_range, gender, medical_history, has_dna)
             st.success(f"تم تسجيل بلاغ المفقود ({full_name}) بنجاح!")
 
-# 2. قسم تسجيل رفات مجهول (مع ميزة رفع صور متعددة)
+# 2. قسم تسجيل رفات مجهول (نموذج متكامل مع رفع الصور بضغطة واحدة)
 elif choice == "تسجيل رفات مجهول (ميداني)":
-    st.header("🦴 تسجيل حالة هيكل عظمي / رفات مجهول مع رفع الصور")
-    
-    # نظراً لأن زر الرفع (file_uploader) لا يعمل بشكل مثالي داخل form تقليدي في Streamlit،
-    # سنقوم ببناء النموذج باستخدام تفاعلات مباشرة آمنة وسلسة.
-    
-    with st.form("remains_form"):
+    st.header("🦴 تسجيل حالة هيكل عظمي / رفات مجهول جديد")
+    st.markdown("أدخل بيانات الرفات وارفع الصور المرفقة، ثم اضغط زر الحفظ النهائي في الأسفل.")
+
+    with st.form("unified_remains_form"):
         location = st.text_input("مكان الاستخراج / العثور")
         col1, col2 = st.columns(2)
         with col1:
@@ -58,53 +56,43 @@ elif choice == "تسجيل رفات مجهول (ميداني)":
         stature = st.number_input("الطول التقديري (بالسنتيمتر)", min_value=0.0, value=170.0)
         analysis_notes = st.text_area("ملاحظات الطب الشرعي والماركرز الفارقة (صفائح، علامات مرضية)")
         
-        submit_info = st.form_submit_button("حفظ بيانات الحالة أولاً")
-
-    # زر رفع الصور المتعددة (مستقل وخارج الـ form ليعمل بمرونة تامة)
-    st.markdown("---")
-    st.subheader("📷 مرفقات الصور والأشعة (رفع متعدد)")
-    uploaded_files = st.file_uploader(
-        "اختر صور العظام أو الأشعة (يمكنك تحديد واختيار أكثر من صورة دفعة واحدة)", 
-        type=["jpg", "jpeg", "png", "dcm"], 
-        accept_multiple_files=True
-    )
-
-    if uploaded_files:
-        # إنشاء مجلد للتخزين المحلي المؤقت على السيرفر
-        os.makedirs("samples", exist_ok=True)
-        saved_paths = []
+        # حقل رفع الصور (يعمل الآن بسلاسة داخل النموذج الموحد)
+        uploaded_files = st.file_uploader(
+            "📷 اختر صور العظام أو الأشعة (يمكنك اختيار أكثر من صورة)", 
+            type=["jpg", "jpeg", "png", "dcm"], 
+            accept_multiple_files=True
+        )
         
-        for uploaded_file in uploaded_files:
-            file_path = os.path.join("samples", uploaded_file.name)
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            saved_paths.append(file_path)
-            
-        st.success(f"تم رفع وتخزين عدد ({len(uploaded_files)}) صورة بنجاح!")
+        submit_all = st.form_submit_button("💾 حفظ الحالة والملفات بالكامل في النظام")
         
-        # عرض معاينة مصغرة للصور المرفوعة أمام الطبيب
-        st.write("معاينة الصور المرفوعة:")
-        cols = st.columns(min(len(uploaded_files), 4))
-        for idx, file in enumerate(uploaded_files):
-            with cols[idx % 4]:
-                st.image(file, caption=file.name, use_container_width=True)
+        if submit_all:
+            if not location:
+                st.error("الرجاء إدخال مكان الاستخراج على الأقل.")
+            else:
+                # معالجة وحفظ الصور المرفوعة إن وجدت
+                saved_paths = []
+                if uploaded_files:
+                    os.makedirs("samples", exist_ok=True)
+                    for uploaded_file in uploaded_files:
+                        file_path = os.path.join("samples", uploaded_file.name)
+                        with open(file_path, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+                        saved_paths.append(file_path)
                 
-        # زر لتأكيد ربط مسارات الصور بالحالة الأخيرة في قاعدة البيانات
-        if st.button("💾 ربط الصور المرفوعة بالحالة في النظام"):
-            conn = sqlite3.connect('forensic_system.db')
-            cursor = conn.cursor()
-            # دمج مسارات الصور بفاصلة نصية لتخزينها معاً
-            all_paths_str = ",".join(saved_paths)
-            
-            # تحديث أحدث حالة رفات أُدخلت بمسارات الصور الفعلية
-            cursor.execute("""
-                UPDATE unidentified_remains 
-                SET bone_image_path = ? 
-                WHERE remains_id = (SELECT MAX(remains_id) FROM unidentified_remains)
-            """, (all_paths_str,))
-            conn.commit()
-            conn.close()
-            st.success("تم تحديث مسارات الصور في قاعدة بيانات الرفات بنجاح تام!")
+                bone_image_path_str = ",".join(saved_paths) if saved_paths else "samples/default.jpg"
+                
+                # حفظ البيانات في قاعدة البيانات
+                conn = sqlite3.connect('forensic_system.db')
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO unidentified_remains 
+                    (recovery_location, estimated_age, estimated_sex, stature, bone_image_path, analysis_notes)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (location, estimated_age, estimated_sex, stature, bone_image_path_str, analysis_notes))
+                
+                conn.commit()
+                conn.close()
+                st.success("🎉 تم حفظ حالة الرفات مع الصور المرفقة بنجاح تام في قاعدة البيانات!")
 
 # 3. قسم السجلات ومحرك المطابقة التفاعلي
 elif choice == "سجلات النظام ومحرك المطابقة الذكي":
@@ -124,9 +112,9 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
         st.subheader("📁 الرفات المجهولة المسجلة:")
         if remains_list:
             for r in remains_list:
-                st.info(f"**معرف الرفات:** {r[0]} | **المكان:** {r[1]} | **الطول:** {r[4]} سم\n\n**الصور المرفقة:** {r[5]}\n\n**ملاحظات:** {r[6]}")
+                st.info(f"**معرف الرفات:** {r[0]} | **المكان:** {r[1]} | **الطول:** {r[4]} سم\n\n**المسار/الصور:** {r[5]}\n\n**ملاحظات:** {r[6]}")
         else:
-            st.warning("لا توجد رفات مسجلة.")
+            st.warning("لا توجد رفات مسجلة حالياً.")
             
     with col_m:
         st.subheader("📋 بلاغات المفقودين المسجلة:")
@@ -134,7 +122,7 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
             for m in missing_list:
                 st.success(f"**معرف المفقود:** {m[0]} | **الاسم:** {m[1]} | **العمر:** {m[2]}\n\n**السجل الطبي:** {m[4]}")
         else:
-            st.warning("لا توجد بلاغات مفقودين مسجلة.")
+            st.warning("لا توجد بلاغات مفقودين مسجلة حالياً.")
             
     st.markdown("---")
     st.subheader("⚡ تشغيل محرك المطابقة والبحث الآلي")
