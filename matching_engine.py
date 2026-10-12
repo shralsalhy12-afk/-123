@@ -1,4 +1,4 @@
-import sqlite3
+from database import get_supabase_client
 
 def calculate_match_score(remains_data, missing_person_record):
     """
@@ -15,14 +15,17 @@ def calculate_match_score(remains_data, missing_person_record):
 
     # 1. الطبقة الجينية (DNA Match) - وزن حاسم
     remains_dna = remains_data.get('has_dna', False)
-    person_dna = missing_person_record[5] # has_dna_sample في جدول المفقودين
+    # استخدام اسم الحقل مباشرة من قاموس Supabase بدلاً من الفهرس الرقمي
+    person_dna = missing_person_record.get('has_dna_sample', False)
+    
     if remains_dna and person_dna:
         score += 40
         match_reasons.append("تطابق أولي في توفر عينات الحمض النووي (DNA) للفحص التحليلي.")
 
     # 2. الطبقة الطبية والجراحية (Surgical Implants & Medical History)
     remains_notes = remains_data.get('notes', "").lower()
-    person_medical = missing_person_record[4].lower() if missing_person_record[4] else ""
+    medical_history_val = missing_person_record.get('medical_history', "")
+    person_medical = medical_history_val.lower() if medical_history_val else ""
 
     if "صفيحة" in remains_notes and "صفيحة" in person_medical or "مسمار" in remains_notes and "مسمار" in person_medical:
         score += 35
@@ -33,7 +36,6 @@ def calculate_match_score(remains_data, missing_person_record):
 
     # 3. الطبقة الأنثروبومترية (العمر، الجنس، والطول Stature)
     remains_stature = remains_data.get('stature', 0.0)
-    # افترضنا نطاق تفاوت مقبول للطول (+/- 3 سم)
     if remains_stature > 0:
         score += 15
         match_reasons.append(f"تقارب في القياسات الهيكلية والطول التقديري ({remains_stature} سم).")
@@ -49,32 +51,30 @@ def calculate_match_score(remains_data, missing_person_record):
 
 def search_and_match(remains_id):
     """
-    بحث شامل في قاعدة البيانات عن الحالات الأقرب للرفات المجهول المحدد
+    بحث شامل في قاعدة بيانات Supabase عن الحالات الأقرب للرفات المجهول المحدد
     """
-    conn = sqlite3.connect('forensic_system.db')
-    cursor = conn.cursor()
+    supabase = get_supabase_client()
 
-    # جلب بيانات الرفات المجهول
-    cursor.execute("SELECT recovery_location, estimated_age, estimated_sex, stature, analysis_notes FROM unidentified_remains WHERE remains_id = ?", (remains_id,))
-    remains = cursor.fetchone()
-
-    if not remains:
+    # جلب بيانات الرفات المجهول باستخدام عميل Supabase
+    remains_res = supabase.table("unidentified_remains").select("*").eq("remains_id", remains_id).execute()
+    
+    if not remains_res.data:
         print("لم يتم العثور على حالة الرفات المجهول المحددة.")
-        conn.close()
         return
 
+    remains = remains_res.data[0]
     remains_data = {
-        "location": remains[0],
-        "age": remains[1],
-        "sex": remains[2],
-        "stature": remains[3],
-        "notes": remains[4],
+        "location": remains.get('recovery_location'),
+        "age": remains.get('estimated_age'),
+        "sex": remains.get('estimated_sex'),
+        "stature": remains.get('stature', 0.0),
+        "notes": remains.get('analysis_notes', ""),
         "has_dna": True # افتراضي للاختبار
     }
 
-    # جلب كافة سجلات المفقودين للمقارنة
-    cursor.execute("SELECT missing_id, full_name, age_range, gender, medical_history, has_dna_sample FROM missing_persons")
-    missing_persons = cursor.fetchall()
+    # جلب كافة سجلات المفقودين للمقارنة من Supabase
+    missing_res = supabase.table("missing_persons").select("*").execute()
+    missing_persons = missing_res.data
 
     print(f"--- نتائج محرك المطابقة الشامل للرفات رقم ({remains_id}) ---")
 
@@ -82,8 +82,8 @@ def search_and_match(remains_id):
     for person in missing_persons:
         match_result = calculate_match_score(remains_data, person)
         results.append({
-            "id": person[0],
-            "name": person[1],
+            "id": person.get('missing_id'),
+            "name": person.get('full_name'),
             "score": match_result["match_percentage"],
             "reasons": match_result["match_reasons"]
         })
@@ -98,7 +98,7 @@ def search_and_match(remains_id):
         for reason in res['reasons']:
             print(f"   - {reason}")
 
-    conn.close()
+    return results
 
 if __name__ == '__main__':
-    print("تم تحميل محرك المطابقة الشامل بنجاح وجاهز للربط بالواجهة التفاعلية لاحقاً!")
+    print("تم تحميل محرك المطابقة الشامل للعمل مع Supabase بنجاح!")
