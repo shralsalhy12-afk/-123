@@ -1,7 +1,6 @@
 import streamlit as st
-import sqlite3
 import os
-from database import init_db
+from database import get_supabase_client, init_db
 from add_case import add_unidentified_remains
 from add_missing_person import add_missing_person
 from matching_engine import calculate_match_score
@@ -9,8 +8,11 @@ from matching_engine import calculate_match_score
 # إعدادات الصفحة
 st.set_page_config(page_title="نظام المساعدة في الطب الشرعي - غزة", layout="wide")
 
-# تهيئة قاعدة البيانات عند تشغيل التطبيق
+# تهيئة واختبار الاتصال بقاعدة البيانات عند تشغيل التطبيق
 init_db()
+
+# الحصول على عميل Supabase المشفر
+supabase = get_supabase_client()
 
 st.title("🧬 نظام المساعدة في الطب الشرعي والتعرف على المفقودين")
 st.markdown("منظومة رقمية ذكية لمطابقة الرفات المجهولة مع بلاغات العائلات بناءً على القياسات، العلامات الجراحية، والـ DNA.")
@@ -37,8 +39,11 @@ if choice == "إضافة بلاغ مفقود (عائلة)":
         submit_missing = st.form_submit_button("حفظ بلاغ المفقود")
         
         if submit_missing and full_name:
-            add_missing_person(full_name, age_range, gender, medical_history, has_dna)
-            st.success(f"تم تسجيل بلاغ المفقود ({full_name}) بنجاح!")
+            try:
+                add_missing_person(full_name, age_range, gender, medical_history, has_dna)
+                st.success(f"تم تسجيل بلاغ المفقود ({full_name}) بنجاح في قاعدة البيانات السحابية!")
+            except Exception as e:
+                st.error(f"حدث خطأ أثناء حفظ البلاغ: {e}")
 
 # 2. قسم تسجيل رفات مجهول (نموذج متكامل مع رفع الصور بضغطة واحدة)
 elif choice == "تسجيل رفات مجهول (ميداني)":
@@ -56,7 +61,7 @@ elif choice == "تسجيل رفات مجهول (ميداني)":
         stature = st.number_input("الطول التقديري (بالسنتيمتر)", min_value=0.0, value=170.0)
         analysis_notes = st.text_area("ملاحظات الطب الشرعي والماركرز الفارقة (صفائح، علامات مرضية)")
         
-        # حقل رفع الصور (يعمل الآن بسلاسة داخل النموذج الموحد)
+        # حقل رفع الصور
         uploaded_files = st.file_uploader(
             "📷 اختر صور العظام أو الأشعة (يمكنك اختيار أكثر من صورة)", 
             type=["jpg", "jpeg", "png", "dcm"], 
@@ -69,50 +74,53 @@ elif choice == "تسجيل رفات مجهول (ميداني)":
             if not location:
                 st.error("الرجاء إدخال مكان الاستخراج على الأقل.")
             else:
-                # معالجة وحفظ الصور المرفوعة إن وجدت
-                saved_paths = []
-                if uploaded_files:
-                    os.makedirs("samples", exist_ok=True)
-                    for uploaded_file in uploaded_files:
-                        file_path = os.path.join("samples", uploaded_file.name)
-                        with open(file_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
-                        saved_paths.append(file_path)
-                
-                bone_image_path_str = ",".join(saved_paths) if saved_paths else "samples/default.jpg"
-                
-                # حفظ البيانات في قاعدة البيانات
-                conn = sqlite3.connect('forensic_system.db')
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO unidentified_remains 
-                    (recovery_location, estimated_age, estimated_sex, stature, bone_image_path, analysis_notes)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (location, estimated_age, estimated_sex, stature, bone_image_path_str, analysis_notes))
-                
-                conn.commit()
-                conn.close()
-                st.success("🎉 تم حفظ حالة الرفات مع الصور المرفقة بنجاح تام في قاعدة البيانات!")
+                try:
+                    # معالجة وحفظ الصور المرفوعة إن وجدت
+                    saved_paths = []
+                    if uploaded_files:
+                        os.makedirs("samples", exist_ok=True)
+                        for uploaded_file in uploaded_files:
+                            file_path = os.path.join("samples", uploaded_file.name)
+                            with open(file_path, "wb") as f:
+                                f.write(uploaded_file.getbuffer())
+                            saved_paths.append(file_path)
+                    
+                    bone_image_path_str = ",".join(saved_paths) if saved_paths else "samples/default.jpg"
+                    
+                    # استدعاء دالة الإضافة السحابية بـ Supabase
+                    add_unidentified_remains(
+                        location=location,
+                        age=estimated_age,
+                        sex=estimated_sex,
+                        stature=stature,
+                        image_path=bone_image_path_str,
+                        notes=analysis_notes
+                    )
+                    st.success("🎉 تم حفظ حالة الرفات مع الصور المرفقة بنجاح تام في قاعدة البيانات السحابية Supabase!")
+                except Exception as e:
+                    st.error(f"حدث خطأ أثناء حفظ بيانات الرفات: {e}")
 
 # 3. قسم السجلات ومحرك المطابقة التفاعلي
 elif choice == "سجلات النظام ومحرك المطابقة الذكي":
-    st.header("🔍 محرك المطابقة الذكي وسجلات الحالات")
+    st.header("🔍 محرك المطابقة الذكي وسجلات الحالات السحابية")
     
-    conn = sqlite3.connect('forensic_system.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT remains_id, recovery_location, estimated_age, estimated_sex, stature, bone_image_path, analysis_notes FROM unidentified_remains")
-    remains_list = cursor.fetchall()
-    
-    cursor.execute("SELECT missing_id, full_name, age_range, gender, medical_history, has_dna_sample FROM missing_persons")
-    missing_list = cursor.fetchall()
+    try:
+        # جلب البيانات مباشرة من جداول Supabase
+        remains_res = supabase.table("unidentified_remains").select("*").execute()
+        remains_list = remains_res.data if remains_res.data else []
+        
+        missing_res = supabase.table("missing_persons").select("*").execute()
+        missing_list = missing_res.data if missing_res.data else []
+    except Exception as e:
+        st.error(f"تعذر جلب البيانات من قاعدة البيانات السحابية: {e}")
+        remains_list, missing_list = [], []
     
     col_r, col_m = st.columns(2)
     with col_r:
         st.subheader("📁 الرفات المجهولة المسجلة:")
         if remains_list:
             for r in remains_list:
-                st.info(f"**معرف الرفات:** {r[0]} | **المكان:** {r[1]} | **الطول:** {r[4]} سم\n\n**المسار/الصور:** {r[5]}\n\n**ملاحظات:** {r[6]}")
+                st.info(f"**معرف الرفات:** {r.get('remains_id')} | **المكان:** {r.get('recovery_location')} | **الطول:** {r.get('stature')} سم\n\n**المسار/الصور:** {r.get('bone_image_path')}\n\n**ملاحظات:** {r.get('analysis_notes')}")
         else:
             st.warning("لا توجد رفات مسجلة حالياً.")
             
@@ -120,7 +128,7 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
         st.subheader("📋 بلاغات المفقودين المسجلة:")
         if missing_list:
             for m in missing_list:
-                st.success(f"**معرف المفقود:** {m[0]} | **الاسم:** {m[1]} | **العمر:** {m[2]}\n\n**السجل الطبي:** {m[4]}")
+                st.success(f"**معرف المفقود:** {m.get('missing_id')} | **الاسم:** {m.get('full_name')} | **العمر:** {m.get('age_range')}\n\n**السجل الطبي:** {m.get('medical_history')}")
         else:
             st.warning("لا توجد بلاغات مفقودين مسجلة حالياً.")
             
@@ -128,13 +136,14 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
     st.subheader("⚡ تشغيل محرك المطابقة والبحث الآلي")
     
     if remains_list and missing_list:
-        selected_remains_id = st.selectbox("اختر معرف الرفات المجهول المراد فحصه ومطابقته:", [r[0] for r in remains_list])
+        remains_ids = [r.get('remains_id') for r in remains_list]
+        selected_remains_id = st.selectbox("اختر معرف الرفات المجهول المراد فحصه ومطابقته:", remains_ids)
         
         if st.button("🚀 بدء عملية المطابقة والبحث الشامل"):
-            selected_remains = next(r for r in remains_list if r[0] == selected_remains_id)
+            selected_remains = next(r for r in remains_list if r.get('remains_id') == selected_remains_id)
             remains_data = {
-                "stature": selected_remains[4],
-                "notes": selected_remains[6],
+                "stature": selected_remains.get('stature', 0.0),
+                "notes": selected_remains.get('analysis_notes', ""),
                 "has_dna": True
             }
             
@@ -144,7 +153,7 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
             for person in missing_list:
                 match_res = calculate_match_score(remains_data, person)
                 results.append({
-                    "name": person[1],
+                    "name": person.get('full_name'),
                     "score": match_res["match_percentage"],
                     "reasons": match_res["match_reasons"]
                 })
@@ -162,5 +171,3 @@ elif choice == "سجلات النظام ومحرك المطابقة الذكي":
                 st.markdown("---")
     else:
         st.info("الرجاء إدخال حالة رفات واحدة على الأقل وبلاغ مفقود واحد لتفعيل محرك المطابقة.")
-        
-    conn.close()
